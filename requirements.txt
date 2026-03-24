@@ -1,0 +1,33 @@
+# Renombrador de PDFs V3 - Dependencias
+# Instituto de Profesionalización y Superación Docente (IPSD)
+# Universidad Nacional Autónoma de Honduras
+
+# UI Moderna
+customtkinter==5.2.2
+
+# OCR (Reconocimiento Óptico de Caracteres)
+pytesseract==0.3.13
+
+# Procesamiento de PDFs
+pdf2image==1.17.0
+PyPDF2==3.0.1
+
+# Comparación de similitud de texto
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.27.3
+
+# Procesamiento de imágenes
+Pillow==12.1.1
+
+# Librerías built-in (no requieren instalación):
+# - hashlib: Hash MD5/SHA256 para comparar archivos
+# - json: Metadata y auditoría
+# - queue: Cola thread-safe para decisiones
+# - logging: Sistema de logs
+# - threading: Procesamiento no bloqueante
+# - tkinter: Interfaz gráfica base (viene con Python)
+# - os, re, sys, time, shutil: Utilidades estándar
+
+# NOTA: Además de estas librerías, necesitas tener instalado:
+# - Tesseract-OCR (incluido en carpeta Tesseract-OCR/)
+# - Poppler (incluido en carpeta poppler/)
