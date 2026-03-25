@@ -35,8 +35,8 @@ _ICON_REF = None   # PhotoImage global para iconphoto (evita GC)
 
 def _preparar_icono() -> Optional[Path]:
     """
-    Genera Assets/Logo_App.ico (transparente, multi-tamaño) la primera vez
-    y devuelve su ruta.  Devuelve None si el PNG fuente no existe o hay error.
+    Genera Assets/Logo_App.ico a partir del PNG sin alterarlo (mantiene transparencia y proporciones).
+    Solo redimensiona a diferentes tamaños manteniendo la relación de aspecto.
     """
     global _ICO_PATH
     if _ICO_PATH is not None:
@@ -46,26 +46,42 @@ def _preparar_icono() -> Optional[Path]:
         dst = ASSETS_PATH / "Logo_App.ico"
         if not src.exists():
             return None
+        
+        # Cargar imagen sin modificar (conserva transparencia)
         img = Image.open(src).convert("RGBA")
-        # Quitar fondo: muestrear esquina superior-izquierda y hacer transparente
-        px = img.load()
-        # Tomar color de fondo desde la esquina
-        br, bg_, bb, _ = px[2, 2]
-        for y in range(img.height):
-            for x in range(img.width):
-                r, g, b, a = px[x, y]
-                dist = abs(r - br) + abs(g - bg_) + abs(b - bb)
-                if dist < 80:
-                    px[x, y] = (r, g, b, 0)
-        # Recortar al contenido opaco
-        bbox = img.getchannel("A").getbbox()
-        if bbox:
-            img = img.crop(bbox)
-        # Guardar ICO multi-tamaño
-        sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)]
-        imgs_ico = [img.resize(s, Image.Resampling.LANCZOS) for s in sizes]
+        
+        # Generar versiones redimensionadas manteniendo proporción
+        # Usar un canvas cuadrado para mantener las proporciones
+        sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+        imgs_ico = []
+        
+        for size in sizes:
+            # Crear canvas cuadrado con fondo blanco/transparente
+            canvas = Image.new("RGBA", size, (255, 255, 255, 0))
+            
+            # Calcular tamaño máximo que cabe en el canvas manteniendo proporción
+            aspect = img.width / img.height
+            if aspect > 1:  # Ancho > Alto
+                new_w = int(size[0] * 0.9)
+                new_h = int(new_w / aspect)
+            else:  # Alto >= Ancho
+                new_h = int(size[1] * 0.9)
+                new_w = int(new_h * aspect)
+            
+            # Redimensionar con alta calidad
+            img_resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            # Centrar en el canvas
+            offset_x = (size[0] - new_w) // 2
+            offset_y = (size[1] - new_h) // 2
+            canvas.paste(img_resized, (offset_x, offset_y), img_resized)
+            
+            imgs_ico.append(canvas)
+        
+        # Guardar como ICO con múltiples resoluciones
         imgs_ico[0].save(str(dst), format="ICO", sizes=sizes,
                          append_images=imgs_ico[1:])
+        _ICO_PATH = dst
         _ICO_PATH = dst
     except Exception:
         pass
@@ -124,11 +140,16 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
         from config import POPPLER_PATH
         from pdf2image import convert_from_path
         
-        poppler_path_str = str(POPPLER_PATH) if POPPLER_PATH.exists() else None
-        imgs = convert_from_path(
-            str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
-            poppler_path=poppler_path_str, dpi=200
-        )
+        if POPPLER_PATH.exists():
+            imgs = convert_from_path(
+                str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
+                poppler_path=str(POPPLER_PATH), dpi=200
+            )
+        else:
+            imgs = convert_from_path(
+                str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
+                dpi=200
+            )
         img_orig = imgs[0] if imgs else None
     except Exception:
         img_orig = None
@@ -188,7 +209,7 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
     canvas.pack(fill="both", expand=True)
 
     # Keep reference to prevent GC
-    ventana._tk_img_zoom = None
+    tk_img_zoom: list = [None]
 
     def _render():
         escala = estado["escala"]
@@ -196,9 +217,9 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
         nw = max(1, int(img_orig.width * escala))
         nh = max(1, int(img_orig.height * escala))
         resized = img_orig.resize((nw, nh), Image.Resampling.LANCZOS)
-        ventana._tk_img_zoom = ImageTk.PhotoImage(resized)
+        tk_img_zoom[0] = ImageTk.PhotoImage(resized)
         canvas.delete("all")
-        canvas.create_image(0, 0, anchor="nw", image=ventana._tk_img_zoom)
+        canvas.create_image(0, 0, anchor="nw", image=tk_img_zoom[0])
         canvas.configure(scrollregion=(0, 0, nw, nh))
 
     _render()
@@ -934,7 +955,9 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
                                                size=(img1.width, img1.height))
                 lbl1 = ctk.CTkLabel(f1, image=self._ctk_img1, text="", cursor="hand2")
                 lbl1.pack(expand=True, pady=(4, 2))
-                lbl1.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.ruta_previo))
+                # Usar variable local para asegurar que no es None en el lambda
+                ruta_p1 = self.ruta_previo
+                lbl1.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, ruta_p1))
                 ctk.CTkLabel(f1, text="🔍 Clic para zoom",
                              font=ctk.CTkFont(size=9), text_color="#999999").pack(pady=(0, 6))
             else:
@@ -964,7 +987,9 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
                                                size=(img2.width, img2.height))
                 lbl2 = ctk.CTkLabel(f2, image=self._ctk_img2, text="", cursor="hand2")
                 lbl2.pack(expand=True, pady=(4, 2))
-                lbl2.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.ruta_nuevo))
+                # Usar variable local para asegurar que no es None en el lambda
+                ruta_p2 = self.ruta_nuevo
+                lbl2.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, ruta_p2))
                 ctk.CTkLabel(f2, text="🔍 Clic para zoom",
                              font=ctk.CTkFont(size=9), text_color="#999999").pack(pady=(0, 6))
             else:

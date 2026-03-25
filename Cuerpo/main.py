@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
@@ -151,9 +151,9 @@ class PantallaProcesamiento(ctk.CTk):
         self.geometry(f"{_W}x{_H}+{_px}+{_py}")
         
         # Variables
-        self.carpeta_entrada = None
-        self.carpeta_salida = None
-        self.logger = None
+        self.carpeta_entrada: Optional[Path] = None
+        self.carpeta_salida: Optional[Path] = None
+        self.logger: Optional[logging.Logger] = None
         self.procesando = False
         self.cola_logs = Queue()
         # StringVar para actualización dinámica de los cards
@@ -161,6 +161,9 @@ class PantallaProcesamiento(ctk.CTk):
         self.var_salida = tk.StringVar()
         # Historial de Documentos Principales guardados en sesión actual
         self.historial_principales = []
+        # Atributos para ventanas modales
+        self._es_adjunto_editado: bool = False
+        self._principal_editado: Optional[Path] = None
         
         self._crear_interfaz()
         _set_app_icon(self)
@@ -556,9 +559,9 @@ class PantallaProcesamiento(ctk.CTk):
     def _limpiar_campos(self):
         """Limpia todos los campos y resetea la interfaz."""
         # Resetear variables
-        self.carpeta_entrada = None
-        self.carpeta_salida = None
-        self.logger = None
+        self.carpeta_entrada: Optional[Path] = None
+        self.carpeta_salida: Optional[Path] = None
+        self.logger: Optional[logging.Logger] = None
         self.var_entrada.set("")
         self.var_salida.set("")
 
@@ -717,6 +720,11 @@ class PantallaProcesamiento(ctk.CTk):
     
     def _procesar_pdfs(self):
         """Lógica principal de procesamiento con 4 capas de verificación."""
+        
+        # Asegurarse de que los valores no son None (ya debieron ser validados en _iniciar_procesamiento)
+        assert self.logger is not None, "Logger no configurado"
+        assert self.carpeta_entrada is not None, "Carpeta entrada no configurada"
+        assert self.carpeta_salida is not None, "Carpeta salida no configurada"
         
         carpeta_temp_seg = None
         try:
@@ -932,10 +940,13 @@ class PantallaProcesamiento(ctk.CTk):
                 if clave_numero and clave_numero in numeros_vistos:
                     nombre_previo = numeros_vistos[clave_numero]
                     self._log_consola(f"  ⚠️  Número '{numero_doc}' ({tipo_doc}) ya registrado → {nombre_previo}", "warning")
+                    assert self.logger is not None
                     self.logger.warning(f"Número duplicado: {numero_doc} en {pdf.name}, previo: {nombre_previo}")
                     _ruta_previo = archivos_procesados.get(nombre_previo, {}).get('ruta')
+                    # numero_doc puede ser None según buscar_numero_documento, pero aquí sabemos que es str
+                    num_doc_str: str = numero_doc if numero_doc is not None else ""
                     guardar_como_respuesta = self._preguntar_numero_duplicado_ui(
-                        numero_doc, tipo_doc, nombre_previo, pdf.name,
+                        num_doc_str, tipo_doc, nombre_previo, pdf.name,
                         ruta_previo=_ruta_previo, ruta_nuevo=pdf
                     )
                     if guardar_como_respuesta is None:
@@ -1168,6 +1179,7 @@ class PantallaProcesamiento(ctk.CTk):
     
     def _copiar_archivo(self, origen: Path, destino: Path):
         """Copia un archivo de origen a destino."""
+        assert self.logger is not None, "Logger no disponible"
         try:
             shutil.copy2(origen, destino)
         except Exception as e:
@@ -1191,7 +1203,7 @@ class PantallaProcesamiento(ctk.CTk):
         Retorna el nombre final generado con los valores confirmados por el usuario.
         """
         sigla = SIGLAS_DOCUMENTO.get(tipo_doc, tipo_doc[:3].upper())
-        resultado = [
+        resultado: list[Any] = [
             generar_nombre_limpio(tipo_doc, fecha, numero_doc, depto, sufijo, texto_contexto=texto_ocr)
         ]
         evento = threading.Event()
@@ -1361,11 +1373,12 @@ class PantallaProcesamiento(ctk.CTk):
             ).pack(pady=(0, 4))
             img_prev = _miniatura_pdf(ruta_pdf, max_size=(390, 430))
             if img_prev:
-                ventana._ctk_img_e = ctk.CTkImage(
+                ctk_img = ctk.CTkImage(
                     light_image=img_prev, dark_image=img_prev,
                     size=(img_prev.width, img_prev.height),
                 )
-                lbl_prev_img = ctk.CTkLabel(left, image=ventana._ctk_img_e, text="",
+                setattr(ventana, '_ctk_img_e', ctk_img)
+                lbl_prev_img = ctk.CTkLabel(left, image=ctk_img, text="",
                                             cursor="hand2")
                 lbl_prev_img.pack(expand=True, pady=(0, 2))
                 lbl_prev_img.bind("<Button-1>", lambda e: _abrir_zoom_pdf(ventana, ruta_pdf))
@@ -1673,7 +1686,7 @@ class PantallaProcesamiento(ctk.CTk):
         Muestra ventana visual para manejar un número de documento duplicado.
         Retorna: True guardar como RESPUESTA, None omitir
         """
-        resultado = [True]
+        resultado: list[Any] = [None]
         evento = threading.Event()
 
         def _mostrar():
@@ -1696,7 +1709,7 @@ class PantallaProcesamiento(ctk.CTk):
         Muestra ventana de verificación y retorna la decisión del usuario.
         Thread-safe.
         """
-        resultado = [None]
+        resultado: list[Any] = [None]
         evento = threading.Event()
 
         def _mostrar_en_hilo_principal():
@@ -1714,7 +1727,7 @@ class PantallaProcesamiento(ctk.CTk):
         Muestra messagebox.askyesno de forma thread-safe.
         Retorna: True si el usuario confirmó, False si canceló.
         """
-        resultado = [None]
+        resultado: list[Any] = [None]
         evento = threading.Event()
 
         def _ask():

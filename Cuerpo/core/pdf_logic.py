@@ -627,7 +627,7 @@ def detectar_cambios_tipo_pdf(ruta_pdf: Path, logger: logging.Logger) -> dict:
 
 
 def extraer_paginas_por_tipo(ruta_pdf: Path, logger: logging.Logger, carpeta_temp: Path,
-                             tipos_info: dict = None, decisiones_usuario: dict = None) -> List[Path]:
+                             tipos_info: Optional[dict] = None, decisiones_usuario: Optional[dict] = None) -> List[Path]:
     """
     Separa un PDF en segmentos usando lógica inteligente.
     

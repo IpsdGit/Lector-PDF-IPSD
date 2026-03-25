@@ -38,15 +38,21 @@ def extraer_texto_ocr(ruta_pdf: Path, logger: logging.Logger) -> str:
         logger.debug(f"Iniciando OCR de: {ruta_pdf.name}")
         
         # Convertir PDF a imágenes (solo primera página para rapidez)
-        poppler_path_str = str(POPPLER_PATH) if POPPLER_PATH.exists() else None
-        
-        imagenes = convert_from_path(
-            str(ruta_pdf),
-            first_page=1,
-            last_page=3,  # Procesar primeras 3 páginas para mayor cobertura
-            poppler_path=poppler_path_str,
-            dpi=280  # DPI aumentado para mejor precisión OCR
-        )
+        if POPPLER_PATH.exists():
+            imagenes = convert_from_path(
+                str(ruta_pdf),
+                first_page=1,
+                last_page=3,
+                poppler_path=str(POPPLER_PATH),
+                dpi=280
+            )
+        else:
+            imagenes = convert_from_path(
+                str(ruta_pdf),
+                first_page=1,
+                last_page=3,
+                dpi=280
+            )
         
         if not imagenes:
             logger.warning(f"No se pudo convertir PDF a imagen: {ruta_pdf.name}")
@@ -82,14 +88,21 @@ def extraer_texto_ocr_pagina(ruta_pdf: Path, num_pagina: int, logger: logging.Lo
         Texto extraído o string vacío en caso de error
     """
     try:
-        poppler_path_str = str(POPPLER_PATH) if POPPLER_PATH.exists() else None
-        imagenes = convert_from_path(
-            str(ruta_pdf),
-            first_page=num_pagina,
-            last_page=num_pagina,
-            poppler_path=poppler_path_str,
-            dpi=280
-        )
+        if POPPLER_PATH.exists():
+            imagenes = convert_from_path(
+                str(ruta_pdf),
+                first_page=num_pagina,
+                last_page=num_pagina,
+                poppler_path=str(POPPLER_PATH),
+                dpi=280
+            )
+        else:
+            imagenes = convert_from_path(
+                str(ruta_pdf),
+                first_page=num_pagina,
+                last_page=num_pagina,
+                dpi=280
+            )
         if not imagenes:
             return ""
         
@@ -152,11 +165,16 @@ def _miniatura_pdf(ruta_pdf: Path, num_pagina: int = 1, max_size: tuple = (380, 
         return _MINIATURA_CACHE[cache_key]
     
     try:
-        poppler_path_str = str(POPPLER_PATH) if POPPLER_PATH.exists() else None
-        imagenes = convert_from_path(
-            str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
-            poppler_path=poppler_path_str, dpi=100
-        )
+        if POPPLER_PATH.exists():
+            imagenes = convert_from_path(
+                str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
+                poppler_path=str(POPPLER_PATH), dpi=100
+            )
+        else:
+            imagenes = convert_from_path(
+                str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
+                dpi=100
+            )
         if not imagenes:
             _MINIATURA_CACHE[cache_key] = None
             return None

@@ -11,7 +11,7 @@ echo  [*] Iniciando aplicacion...
 echo.
 
 cd /d "%~dp0"
-.\venv\Scripts\python.exe .\Cuerpo\renombrador_pdfs_v3.py
+.\venv\Scripts\python.exe .\Cuerpo\main.py
 
 if errorlevel 1 (
     echo.
