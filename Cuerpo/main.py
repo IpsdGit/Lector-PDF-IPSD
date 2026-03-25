@@ -164,6 +164,15 @@ class PantallaProcesamiento(ctk.CTk):
         # Atributos para ventanas modales
         self._es_adjunto_editado: bool = False
         self._principal_editado: Optional[Path] = None
+        # Estado del modal de carga inicial
+        self._ventana_carga: Optional[ctk.CTkToplevel] = None
+        self._carga_estado_var = tk.StringVar(value="Preparando análisis...")
+        self._carga_indicador_var = tk.StringVar(value="● ○ ○")
+        self._carga_porcentaje_var = tk.StringVar(value="0.0%")
+        self._carga_animando = False
+        self._carga_barra = None
+        self._progreso_global = 0.0
+        self._etapa_progreso = "Preparando análisis"
         
         self._crear_interfaz()
         _set_app_icon(self)
@@ -618,6 +627,152 @@ class PantallaProcesamiento(ctk.CTk):
         
         # Programar siguiente actualización
         self.after(100, self._actualizar_consola)
+
+    def _mostrar_modal_carga(self, total_pdfs: int):
+        """Muestra una ventana bloqueante de carga con pasos del proceso."""
+        if self._ventana_carga is not None and self._ventana_carga.winfo_exists():
+            return
+
+        ventana = ctk.CTkToplevel(self)
+        ventana.title("Analizando documentos")
+        ventana.resizable(False, False)
+        ventana.configure(fg_color=COLOR_GRIS_FONDO)
+        ventana.transient(self)
+        ventana.grab_set()
+
+        # Bloquear cierre manual: esta ventana debe permanecer mientras dura el análisis.
+        ventana.protocol("WM_DELETE_WINDOW", lambda: None)
+        ventana.bind("<Alt-F4>", lambda _: "break")
+
+        w, h = 520, 360
+        ventana.update_idletasks()
+        sw, sh = ventana.winfo_screenwidth(), ventana.winfo_screenheight()
+        ventana.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        _set_app_icon(ventana, delay=80)
+
+        marco = ctk.CTkFrame(ventana, fg_color="#FFFFFF", corner_radius=16)
+        marco.pack(fill="both", expand=True, padx=18, pady=18)
+
+        ctk.CTkLabel(
+            marco,
+            text="Analizando PDF(s)",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=COLOR_AZUL_IPSD,
+        ).pack(pady=(18, 8))
+
+        ctk.CTkLabel(
+            marco,
+            text=f"Se detectaron {total_pdfs} archivo(s).",
+            font=ctk.CTkFont(size=14),
+            text_color=COLOR_GRIS_TEXTO,
+        ).pack(pady=(0, 10))
+
+        ctk.CTkLabel(
+            marco,
+            textvariable=self._carga_indicador_var,
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=COLOR_VERDE_IPSD,
+        ).pack(pady=(2, 6))
+
+        self._carga_barra = ctk.CTkProgressBar(marco, width=360)
+        self._carga_barra.pack(pady=(0, 10))
+        self._carga_barra.set(self._progreso_global)
+
+        ctk.CTkLabel(
+            marco,
+            textvariable=self._carga_porcentaje_var,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLOR_VERDE_IPSD,
+        ).pack(pady=(0, 8))
+
+        ctk.CTkLabel(
+            marco,
+            textvariable=self._carga_estado_var,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#2D3A4A",
+            wraplength=440,
+            justify="center",
+        ).pack(padx=16, pady=(0, 12))
+
+        pasos = (
+            "Pasos que se ejecutarán:\n"
+            "1. Detectar cambios de tipo y segmentación.\n"
+            "2. Extraer texto OCR y metadatos.\n"
+            "3. Verificar duplicados (hash, número y similitud).\n"
+            "4. Confirmar nombre, guardar o anexar documento."
+        )
+        ctk.CTkLabel(
+            marco,
+            text=pasos,
+            font=ctk.CTkFont(size=12),
+            text_color="#4F5A68",
+            justify="left",
+            wraplength=450,
+            anchor="w",
+        ).pack(fill="x", padx=22, pady=(0, 16))
+
+        self._ventana_carga = ventana
+        self._carga_animando = True
+        self._animar_indicador_carga(0)
+
+    def _animar_indicador_carga(self, paso: int):
+        """Anima un indicador textual simple mientras el modal esté activo."""
+        if not self._carga_animando:
+            return
+        secuencia = ("● ○ ○", "○ ● ○", "○ ○ ●")
+        self._carga_indicador_var.set(secuencia[paso % len(secuencia)])
+        self.after(260, lambda: self._animar_indicador_carga(paso + 1))
+
+    def _actualizar_modal_carga(self, mensaje: str):
+        """Actualiza el texto de estado del modal de carga (thread-safe via after)."""
+        if self._ventana_carga is None:
+            return
+        try:
+            if self._ventana_carga.winfo_exists():
+                self._carga_estado_var.set(mensaje)
+        except tk.TclError:
+            pass
+
+    def _actualizar_progreso_global(self, progreso: float, etapa: str):
+        """Actualiza progreso global de forma segura para UI principal y modales."""
+        p = max(0.0, min(1.0, float(progreso)))
+
+        def _apply():
+            self._progreso_global = p
+            self._etapa_progreso = etapa
+            porcentaje = f"{p * 100:.1f}%"
+
+            self.progress_bar.set(p)
+            self.estado_label.configure(text=f"{etapa} ({porcentaje})")
+
+            if self._carga_barra is not None:
+                try:
+                    self._carga_barra.set(p)
+                    self._carga_porcentaje_var.set(porcentaje)
+                except Exception:
+                    pass
+
+        self.after(0, _apply)
+
+    def _ocultar_modal_carga(self):
+        """Cierra el modal de carga y detiene animaciones."""
+        self._carga_animando = False
+        if self._carga_barra is not None:
+            try:
+                self._carga_barra.set(1.0)
+            except Exception:
+                pass
+        self._carga_barra = None
+
+        if self._ventana_carga is not None:
+            try:
+                if self._ventana_carga.winfo_exists():
+                    self._ventana_carga.grab_release()
+                    self._ventana_carga.destroy()
+            except tk.TclError:
+                pass
+        self._ventana_carga = None
     
     def _iniciar_procesamiento(self):
         """Inicia el procesamiento de PDFs en un hilo separado."""
@@ -713,6 +868,14 @@ class PantallaProcesamiento(ctk.CTk):
         
         # Resetear progress bar
         self.progress_bar.set(0)
+        self._progreso_global = 0.0
+        self._etapa_progreso = "Iniciando análisis"
+        self._carga_porcentaje_var.set("0.0%")
+        self._actualizar_progreso_global(0.0, "Iniciando análisis")
+
+        # Mostrar modal bloqueante de carga al inicio del análisis
+        self._carga_estado_var.set("Iniciando análisis de documentos...")
+        self._mostrar_modal_carga(len(pdfs_encontrados))
         
         # Iniciar procesamiento en hilo separado
         thread = threading.Thread(target=self._procesar_pdfs, daemon=True)
@@ -732,6 +895,8 @@ class PantallaProcesamiento(ctk.CTk):
             self._log_consola("INICIO DE PROCESAMIENTO - LECTOR V3")
             self._log_consola("="*70)
             self.logger.info("Iniciando procesamiento...")
+            self.after(0, lambda: self._actualizar_modal_carga("Preparando lectura de archivos PDF..."))
+            self._actualizar_progreso_global(0.02, "Preparando lectura de archivos")
             
             # Obtener lista de PDFs
             pdfs_originales = list(self.carpeta_entrada.glob("*.pdf"))
@@ -739,8 +904,21 @@ class PantallaProcesamiento(ctk.CTk):
             carpeta_temp_seg = self.carpeta_salida / "_temp_segmentos"
 
             self._log_consola(f"\n🔍 Detectando cambios de tipo en {len(pdfs_originales)} PDF(s)...")
+            total_pre = max(1, len(pdfs_originales))
+            peso_segmentacion = 0.35
+            peso_procesamiento = 0.65
             
-            for pdf_original in pdfs_originales:
+            for idx_pre, pdf_original in enumerate(pdfs_originales, 1):
+                p_seg = (idx_pre / total_pre) * peso_segmentacion
+                self._actualizar_progreso_global(
+                    p_seg,
+                    f"Segmentando documentos {idx_pre}/{total_pre}"
+                )
+                self.after(
+                    0,
+                    lambda i=idx_pre, n=pdf_original.name, t=len(pdfs_originales):
+                    self._actualizar_modal_carga(f"Segmentación inicial ({i}/{t}): {n}")
+                )
                 self._log_consola(f"  📄 Analizando: {pdf_original.name}", "info")
                 self.update()
                 
@@ -785,7 +963,9 @@ class PantallaProcesamiento(ctk.CTk):
                                     punto['tipo'],
                                     pag_ant,
                                     pag_act,
-                                    modo_lista=bool(punto.get('es_caso_lista'))
+                                    modo_lista=bool(punto.get('es_caso_lista')),
+                                    progreso=self._progreso_global,
+                                    etapa=self._etapa_progreso,
                                 )
                                 decision = ventana.obtener_decision()
                                 
@@ -843,8 +1023,16 @@ class PantallaProcesamiento(ctk.CTk):
             
             # Procesar cada PDF
             for idx, pdf in enumerate(pdfs, 1):
-                progreso = idx / total_pdfs
-                self.progress_bar.set(progreso)
+                p_proc = peso_segmentacion + (idx / max(1, total_pdfs)) * peso_procesamiento
+                self._actualizar_progreso_global(
+                    p_proc,
+                    f"Procesando y renombrando {idx}/{total_pdfs}"
+                )
+                self.after(
+                    0,
+                    lambda i=idx, n=pdf.name, t=total_pdfs:
+                    self._actualizar_modal_carga(f"Procesando ({i}/{t}): {n}")
+                )
                 
                 self._log_consola(f"\n[{idx}/{total_pdfs}] Procesando: {pdf.name}")
                 self.logger.info(f"Procesando [{idx}/{total_pdfs}]: {pdf.name}")
@@ -1143,10 +1331,10 @@ class PantallaProcesamiento(ctk.CTk):
             self.logger.info("="*70)
             self.logger.info(f"PROCESAMIENTO COMPLETADO - {archivos_renombrados}/{total_pdfs} archivos")
             self.logger.info("="*70)
+            self._actualizar_progreso_global(1.0, "Proceso completado")
+            self.after(0, lambda: self._actualizar_modal_carga("Finalizando y consolidando resultados..."))
             
-            self.estado_label.configure(
-                text=f"✅ Completado: {archivos_renombrados} archivos procesados"
-            )
+            self.estado_label.configure(text=f"✅ Completado: {archivos_renombrados} archivos procesados")
             
             # Mostrar mensaje de éxito (thread-safe)
             _msg = (
@@ -1164,6 +1352,7 @@ class PantallaProcesamiento(ctk.CTk):
             self.after(0, lambda m=error_msg: messagebox.showerror("Error", m))
         
         finally:
+            self.after(0, self._ocultar_modal_carga)
             if carpeta_temp_seg and carpeta_temp_seg.exists():
                 shutil.rmtree(carpeta_temp_seg, ignore_errors=True)
             # Deshabilitar botón procesar al terminar
@@ -1331,6 +1520,34 @@ class PantallaProcesamiento(ctk.CTk):
                 text_color=COLOR_BLANCO,
             ).pack(pady=11)
 
+            # Banda de progreso contextual para ventana de renombrado.
+            progreso_wrap = ctk.CTkFrame(ventana, fg_color="#F4F8FC", corner_radius=10)
+            progreso_wrap.pack(fill="x", padx=14, pady=(8, 4))
+            porcentaje_actual = f"{self._progreso_global * 100:.1f}%"
+            fila_prog = ctk.CTkFrame(progreso_wrap, fg_color="transparent")
+            fila_prog.pack(fill="x", padx=10, pady=(8, 3))
+            ctk.CTkLabel(
+                fila_prog,
+                text="● Progreso del proceso",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=COLOR_AZUL_IPSD,
+            ).pack(side="left")
+            ctk.CTkLabel(
+                fila_prog,
+                text=porcentaje_actual,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=COLOR_VERDE_IPSD,
+            ).pack(side="right")
+            barra_prog = ctk.CTkProgressBar(progreso_wrap)
+            barra_prog.pack(fill="x", padx=10, pady=(0, 3))
+            barra_prog.set(self._progreso_global)
+            ctk.CTkLabel(
+                progreso_wrap,
+                text=f"Etapa: {self._etapa_progreso}",
+                font=ctk.CTkFont(size=10),
+                text_color="#546375",
+            ).pack(anchor="w", padx=10, pady=(0, 8))
+
             # BOTONES (bottom)
             bframe = ctk.CTkFrame(ventana, fg_color="white", corner_radius=0)
             bframe.pack(fill="x", side="bottom")
@@ -1342,12 +1559,13 @@ class PantallaProcesamiento(ctk.CTk):
             ).pack(pady=(6, 2))
             brow = ctk.CTkFrame(bframe, fg_color="transparent")
             brow.pack(pady=(0, 12))
-            ctk.CTkButton(
+            btn_confirmar = ctk.CTkButton(
                 brow, text="✅ Confirmar nombre", command=_confirmar,
                 fg_color=COLOR_VERDE_IPSD, hover_color="#7AA020",
                 width=200, height=52, corner_radius=10,
                 font=ctk.CTkFont(size=11, weight="bold"),
-            ).pack(side="left", padx=6)
+            )
+            btn_confirmar.pack(side="left", padx=6)
             ctk.CTkButton(
                 brow, text="↩️ Usar nombre actual", command=_cancelar,
                 fg_color="white", hover_color="#EBF3FF",
@@ -1482,6 +1700,62 @@ class PantallaProcesamiento(ctk.CTk):
                             border_width=1, border_color="#BBCCE8",
                         ).pack(side="left", padx=2)
 
+            # ===== SECCIÓN DE ADJUNTOS (PRIMER CAMPO) =====
+            var_es_adjunto = ctk.BooleanVar(value=tipo_doc in TIPOS_ADJUNTOS)
+            _vars["v_es_adjunto"] = var_es_adjunto
+
+            seccion_adjunto = ctk.CTkFrame(right, fg_color="#F6FAFF", corner_radius=10)
+            seccion_adjunto.pack(fill="x", padx=14, pady=(10, 6))
+
+            ctk.CTkLabel(
+                seccion_adjunto,
+                text="Modo de guardado",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=COLOR_AZUL_IPSD,
+            ).pack(anchor="w", padx=12, pady=(8, 2))
+
+            fila_adjunto = ctk.CTkFrame(seccion_adjunto, fg_color="transparent")
+            fila_adjunto.pack(fill="x", padx=10, pady=(0, 8))
+
+            checkbox_adjunto = ctk.CTkCheckBox(
+                fila_adjunto,
+                text="📎 Marcar como adjunto/anexo",
+                variable=var_es_adjunto,
+                command=lambda: _toggle_adjunto(),
+                font=ctk.CTkFont(size=11),
+                checkbox_width=20,
+                checkbox_height=20,
+            )
+            checkbox_adjunto.pack(side="left", padx=0)
+
+            ctk.CTkLabel(
+                fila_adjunto,
+                text="Anexar a:",
+                font=ctk.CTkFont(size=10),
+                text_color=COLOR_GRIS_TEXTO,
+            ).pack(side="left", padx=(16, 6))
+
+            lista_principales = [Path(ruta).stem for ruta in self.historial_principales]
+            combo_principal = ctk.CTkComboBox(
+                fila_adjunto,
+                values=lista_principales if lista_principales else ["(Sin documentos anteriores)"],
+                state="disabled",
+                width=220,
+                height=30,
+                border_color=COLOR_AZUL_IPSD,
+            )
+            combo_principal.pack(side="left", padx=6)
+            if lista_principales:
+                combo_principal.set(lista_principales[0])
+            _vars["v_principal"] = combo_principal
+
+            ctk.CTkLabel(
+                seccion_adjunto,
+                text="Si está marcado como adjunto, el nombre se toma del documento principal.",
+                font=ctk.CTkFont(size=9),
+                text_color="#5E6E80",
+            ).pack(anchor="w", padx=12, pady=(0, 8))
+
             # Fila de tipo
             fila_tipo = ctk.CTkFrame(right, fg_color="transparent")
             fila_tipo.pack(fill="x", padx=14, pady=(7, 1))
@@ -1508,82 +1782,29 @@ class PantallaProcesamiento(ctk.CTk):
                 text_color="#FFFFFF",
             ).pack(side="left")
 
-            # ===== SECCIÓN DE ADJUNTOS =====
-            var_es_adjunto = ctk.BooleanVar(value=tipo_doc in TIPOS_ADJUNTOS)
-            _vars["v_es_adjunto"] = var_es_adjunto
-            
-            def _toggle_adjunto():
-                es_adj = var_es_adjunto.get()
-                combo_principal.configure(state="normal" if es_adj else "disabled")
-                # Ocultar/mostrar campos de renombrado
-                for widget in campo_num_frame, campo_depto_frame, campo_fec_frame:
-                    if widget and widget.winfo_exists():
-                        if es_adj:
-                            widget.pack_forget()
-                        else:
-                            widget.pack(fill="x", padx=14, pady=(7, 1))
-                _actualizar_preview()
-            
-            fila_adjunto = ctk.CTkFrame(right, fg_color="transparent")
-            fila_adjunto.pack(fill="x", padx=14, pady=(10, 2))
-            
-            checkbox_adjunto = ctk.CTkCheckBox(
-                fila_adjunto,
-                text="📎 Es un adjunto/anexo",
-                variable=var_es_adjunto,
-                command=_toggle_adjunto,
-                font=ctk.CTkFont(size=11),
-                checkbox_width=20,
-                checkbox_height=20,
-            )
-            checkbox_adjunto.pack(side="left", padx=0)
-            
-            # ComboBox para seleccionar documento principal
-            ctk.CTkLabel(
-                fila_adjunto,
-                text="Anexar a:",
-                font=ctk.CTkFont(size=10),
-                text_color=COLOR_GRIS_TEXTO,
-            ).pack(side="left", padx=(20, 6))
-            
-            # Obtener lista de nombres del historial
-            lista_principales = [Path(ruta).stem for ruta in self.historial_principales]
-            
-            combo_principal = ctk.CTkComboBox(
-                fila_adjunto,
-                values=lista_principales if lista_principales else ["(Sin documentos anteriores)"],
-                state="disabled",
-                width=200,
-                height=28,
-                border_color=COLOR_AZUL_IPSD,
-            )
-            combo_principal.pack(side="left", padx=6)
-            if lista_principales:
-                combo_principal.set(lista_principales[0])
-            _vars["v_principal"] = combo_principal
-
             # Filas de campos (las guardaremos para poder ocultarlas/mostrarlas)
             campo_num_frame = None
             campo_depto_frame = None
             campo_fec_frame = None
+            fila_sufijo = None
             
             # Filas de campos
             def _crear_campo_num():
-                global campo_num_frame
+                nonlocal campo_num_frame
                 campo_num_frame = ctk.CTkFrame(right, fg_color="transparent")
                 if not var_es_adjunto.get():
                     campo_num_frame.pack(fill="x", padx=14, pady=(7, 1))
                 _campo_impl("Número", numero_doc, _cands_numero(), "v_num", False, False, campo_num_frame)
             
             def _crear_campo_depto():
-                global campo_depto_frame
+                nonlocal campo_depto_frame
                 campo_depto_frame = ctk.CTkFrame(right, fg_color="transparent")
                 if not var_es_adjunto.get():
                     campo_depto_frame.pack(fill="x", padx=14, pady=(7, 1))
                 _campo_impl("Departamento", depto, _cands_depto(), "v_dep", False, False, campo_depto_frame)
             
             def _crear_campo_fec():
-                global campo_fec_frame
+                nonlocal campo_fec_frame
                 campo_fec_frame = ctk.CTkFrame(right, fg_color="transparent")
                 if not var_es_adjunto.get():
                     campo_fec_frame.pack(fill="x", padx=14, pady=(7, 1))
@@ -1670,7 +1891,57 @@ class PantallaProcesamiento(ctk.CTk):
                     fila_sufijo.pack(fill="x", padx=14, pady=(7, 1))
                 _campo_impl("Sufijo", sufijo, [], "v_sfx", readonly=True, parent_frame=fila_sufijo)
 
-            ventana.protocol("WM_DELETE_WINDOW", _cancelar)
+            def _toggle_adjunto():
+                es_adj = var_es_adjunto.get()
+                combo_principal.configure(state="normal" if es_adj else "disabled")
+
+                # Ocultar y deshabilitar campos no necesarios cuando es adjunto.
+                campos = [fila_tipo, campo_num_frame, campo_depto_frame, campo_fec_frame, fila_sufijo]
+                for campo in campos:
+                    if not campo or not campo.winfo_exists():
+                        continue
+                    if es_adj:
+                        campo.pack_forget()
+                    else:
+                        campo.pack(fill="x", padx=14, pady=(7, 1))
+
+                _actualizar_estado_confirmar()
+                _actualizar_preview()
+
+            def _actualizar_estado_confirmar(*_):
+                es_adj = var_es_adjunto.get()
+                principal = combo_principal.get().strip()
+                principal_valido = bool(lista_principales) and bool(principal) and principal != "(Sin documentos anteriores)"
+
+                if es_adj and not principal_valido:
+                    btn_confirmar.configure(
+                        state="disabled",
+                        fg_color="#B0B7C3",
+                        hover_color="#B0B7C3",
+                        text_color="#ECEFF3",
+                    )
+                    _vars["lbl_err"].configure(
+                        text="⚠️  Para adjunto debes seleccionar un documento principal."
+                    )
+                else:
+                    btn_confirmar.configure(
+                        state="normal",
+                        fg_color=COLOR_VERDE_IPSD,
+                        hover_color="#7AA020",
+                        text_color=COLOR_BLANCO,
+                    )
+                    if _vars["lbl_err"].cget("text") == "⚠️  Para adjunto debes seleccionar un documento principal.":
+                        _vars["lbl_err"].configure(text="")
+
+            combo_principal.configure(command=lambda _value: _actualizar_estado_confirmar())
+            combo_principal.bind("<KeyRelease>", _actualizar_estado_confirmar)
+
+            _toggle_adjunto()
+            _actualizar_estado_confirmar()
+
+            # En esta etapa el usuario debe elegir acción con botones del flujo.
+            ventana.protocol("WM_DELETE_WINDOW", lambda: None)
+            ventana.bind("<Alt-F4>", lambda _: "break")
             ventana.wait_window()
             evento.set()
 
@@ -1693,7 +1964,9 @@ class PantallaProcesamiento(ctk.CTk):
             ventana = VentanaNumDuplicado(
                 self, numero, tipo,
                 archivo_previo, ruta_previo,
-                archivo_nuevo, ruta_nuevo
+                archivo_nuevo, ruta_nuevo,
+                progreso=self._progreso_global,
+                etapa=self._etapa_progreso,
             )
             decision = ventana.obtener_decision()
             resultado[0] = None if decision == "omitir" else True
@@ -1713,7 +1986,11 @@ class PantallaProcesamiento(ctk.CTk):
         evento = threading.Event()
 
         def _mostrar_en_hilo_principal():
-            ventana = VentanaVerificacion(self, archivo1, archivo2, texto1, texto2, similitud)
+            ventana = VentanaVerificacion(
+                self, archivo1, archivo2, texto1, texto2, similitud,
+                progreso=self._progreso_global,
+                etapa=self._etapa_progreso,
+            )
             resultado[0] = ventana.obtener_decision()
             evento.set()
 

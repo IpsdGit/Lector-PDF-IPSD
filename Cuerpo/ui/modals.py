@@ -372,6 +372,64 @@ def _abrir_calendario(parent, var_fecha: "ctk.StringVar", on_change=None):
     _render()
 
 
+def _crear_bloque_progreso(parent, progreso: float, etapa: str):
+    """Renderiza una banda visual de progreso en modales de decisión."""
+    p = max(0.0, min(1.0, float(progreso)))
+    cont = ctk.CTkFrame(parent, fg_color="#F4F8FC", corner_radius=10)
+    cont.pack(fill="x", padx=20, pady=(8, 2))
+
+    fila = ctk.CTkFrame(cont, fg_color="transparent")
+    fila.pack(fill="x", padx=10, pady=(8, 4))
+
+    ctk.CTkLabel(
+        fila,
+        text="● Progreso del proceso",
+        font=ctk.CTkFont(size=11, weight="bold"),
+        text_color=COLOR_AZUL_IPSD,
+    ).pack(side="left")
+
+    ctk.CTkLabel(
+        fila,
+        text=f"{p * 100:.1f}%",
+        font=ctk.CTkFont(size=11, weight="bold"),
+        text_color=COLOR_VERDE_IPSD,
+    ).pack(side="right")
+
+    barra = ctk.CTkProgressBar(cont, width=100)
+    barra.pack(fill="x", padx=10, pady=(0, 4))
+    barra.set(p)
+
+    if etapa:
+        ctk.CTkLabel(
+            cont,
+            text=f"Etapa: {etapa}",
+            font=ctk.CTkFont(size=10),
+            text_color="#546375",
+        ).pack(anchor="w", padx=10, pady=(0, 8))
+
+
+def _crear_badge_pagina(parent, titulo: str, numero: int, color: str):
+    """Dibuja una etiqueta visual tipo badge para identificar páginas."""
+    cont = ctk.CTkFrame(parent, fg_color="#EEF4FB", corner_radius=12)
+    cont.pack(side="left", padx=6, pady=2)
+
+    ctk.CTkLabel(
+        cont,
+        text=titulo,
+        font=ctk.CTkFont(size=9, weight="bold"),
+        text_color="#5A6A7D",
+    ).pack(side="left", padx=(10, 6), pady=6)
+
+    chip = ctk.CTkFrame(cont, fg_color=color, corner_radius=999)
+    chip.pack(side="left", padx=(0, 10), pady=5)
+    ctk.CTkLabel(
+        chip,
+        text=f"Pág. {numero}",
+        font=ctk.CTkFont(size=10, weight="bold"),
+        text_color=COLOR_BLANCO,
+    ).pack(padx=10, pady=2)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # CLASE: VENTANA CONSULTA SEPARACIÓN DE DOCUMENTOS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -386,7 +444,9 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
     
     def __init__(self, parent, pdf_ruta: Path, tipo_doc: str,
                  num_pagina_anterior: int, num_pagina_actual: int,
-                 modo_lista: bool = False):
+                 modo_lista: bool = False,
+                 progreso: float = 0.0,
+                 etapa: str = ""):
         super().__init__(parent)
         
         self.pdf_ruta = pdf_ruta
@@ -394,6 +454,8 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         self.num_pagina_anterior = num_pagina_anterior
         self.num_pagina_actual = num_pagina_actual
         self.modo_lista = modo_lista
+        self.progreso = progreso
+        self.etapa = etapa
         self.decision = None  # "mismo" o "diferente"
         
         # Configuración ventana
@@ -417,6 +479,9 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         # Modal
         self.transient(parent)
         self.grab_set()
+        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
         
         self._crear_interfaz()
@@ -437,17 +502,17 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color=COLOR_BLANCO
         ).pack(pady=12)
+
+        _crear_bloque_progreso(self, self.progreso, self.etapa)
         
         # ===== INFO =====
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
         info_frame.pack(fill="x", padx=20, pady=(8, 0))
-        
-        ctk.CTkLabel(
-            info_frame,
-            text=f"Página {self.num_pagina_anterior} vs página {self.num_pagina_actual}",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=COLOR_AZUL_IPSD
-        ).pack()
+
+        fila_badges = ctk.CTkFrame(info_frame, fg_color="transparent")
+        fila_badges.pack()
+        _crear_badge_pagina(fila_badges, "Documento Anterior", self.num_pagina_anterior, COLOR_AZUL_IPSD)
+        _crear_badge_pagina(fila_badges, "Documento Actual", self.num_pagina_actual, "#FF6B00")
         
         # ===== BOTONES (ABAJO) =====
         botones_frame = ctk.CTkFrame(self, fg_color="white", corner_radius=0)
@@ -544,13 +609,10 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=COLOR_AZUL_IPSD
         ).pack(pady=(8, 2))
-        
-        ctk.CTkLabel(
-            doc_ant_frame,
-            text=f"Página {self.num_pagina_anterior}",
-            font=ctk.CTkFont(size=10),
-            text_color=COLOR_GRIS_TEXTO
-        ).pack(pady=(0, 5))
+
+        badge_ant_wrap = ctk.CTkFrame(doc_ant_frame, fg_color="transparent")
+        badge_ant_wrap.pack(pady=(0, 5))
+        _crear_badge_pagina(badge_ant_wrap, "Referencia", self.num_pagina_anterior, COLOR_AZUL_IPSD)
         
         # Miniatura anterior
         img_ant = _miniatura_pdf(self.pdf_ruta, self.num_pagina_anterior, max_size=(400, 430))
@@ -579,13 +641,10 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#FF6B00"
         ).pack(pady=(8, 2))
-        
-        ctk.CTkLabel(
-            doc_act_frame,
-            text=f"Página {self.num_pagina_actual}",
-            font=ctk.CTkFont(size=10),
-            text_color=COLOR_GRIS_TEXTO
-        ).pack(pady=(0, 5))
+
+        badge_act_wrap = ctk.CTkFrame(doc_act_frame, fg_color="transparent")
+        badge_act_wrap.pack(pady=(0, 5))
+        _crear_badge_pagina(badge_act_wrap, "Comparación", self.num_pagina_actual, "#FF6B00")
         
         # Miniatura actual
         img_act = _miniatura_pdf(self.pdf_ruta, self.num_pagina_actual, max_size=(400, 430))
@@ -627,8 +686,10 @@ class VentanaVerificacion(ctk.CTkToplevel):
     decidir si son duplicados y qué acción tomar.
     """
     
-    def __init__(self, parent, archivo1: Path, archivo2: Path, 
-                 texto1: str, texto2: str, similitud: float):
+    def __init__(self, parent, archivo1: Path, archivo2: Path,
+                 texto1: str, texto2: str, similitud: float,
+                 progreso: float = 0.0,
+                 etapa: str = ""):
         super().__init__(parent)
         
         self.archivo1 = archivo1
@@ -636,6 +697,8 @@ class VentanaVerificacion(ctk.CTkToplevel):
         self.texto1 = texto1
         self.texto2 = texto2
         self.similitud = similitud
+        self.progreso = progreso
+        self.etapa = etapa
         self.decision = None  # "mantener_ambos", "eliminar_2", "renombrar_2"
         
         # Configuración ventana
@@ -656,6 +719,9 @@ class VentanaVerificacion(ctk.CTkToplevel):
         # Modal
         self.transient(parent)
         self.grab_set()
+        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
         
         self._crear_interfaz()
@@ -673,6 +739,8 @@ class VentanaVerificacion(ctk.CTkToplevel):
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color=COLOR_BLANCO
         ).pack(pady=12)
+
+        _crear_bloque_progreso(self, self.progreso, self.etapa)
         
         # ===== 2. INFO SIMILITUD (arriba) =====
         info_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -842,7 +910,9 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
 
     def __init__(self, parent, numero: str, tipo: str,
                  archivo_previo: str, ruta_previo: Optional[Path],
-                 archivo_nuevo: str, ruta_nuevo: Optional[Path]):
+                 archivo_nuevo: str, ruta_nuevo: Optional[Path],
+                 progreso: float = 0.0,
+                 etapa: str = ""):
         super().__init__(parent)
 
         self.numero       = numero
@@ -851,7 +921,9 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
         self.ruta_previo  = ruta_previo
         self.archivo_nuevo = archivo_nuevo
         self.ruta_nuevo   = ruta_nuevo
-        self.decision     = "respuesta"  # Default al cerrar con X
+        self.progreso = progreso
+        self.etapa = etapa
+        self.decision     = "respuesta"
 
         self.title("Número de documento duplicado")
         self.resizable(True, True)
@@ -866,6 +938,9 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
 
         self.transient(parent)
         self.grab_set()
+        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
 
         self._crear_interfaz()
@@ -880,6 +955,8 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color=COLOR_BLANCO
         ).pack(pady=12)
+
+        _crear_bloque_progreso(self, self.progreso, self.etapa)
 
         # ===== INFO =====
         info = ctk.CTkFrame(self, fg_color="transparent")
