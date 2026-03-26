@@ -206,6 +206,52 @@ class PantallaProcesamiento(ctk.CTk):
         out = img.copy()
         out.putdata(new)
         return out
+
+    def _centrar_toplevel(self, window, width: int, height: int, _segunda_pasada: bool = True):
+        """Centra una ventana secundaria con ajuste robusto por pantalla y parent."""
+        if _segunda_pasada:
+            window.geometry(f"{width}x{height}")
+        window.update_idletasks()
+
+        screen_w = int(window.winfo_screenwidth())
+        screen_h = int(window.winfo_screenheight())
+
+        margen = 24
+        real_w = min(int(width), max(620, screen_w - (margen * 2)))
+        real_h = min(int(height), max(520, screen_h - (margen * 2)))
+
+        x = (screen_w - real_w) // 2
+        y = (screen_h - real_h) // 2
+
+        x = max(margen, min(x, max(margen, screen_w - real_w - margen)))
+        y = max(margen, min(y, max(margen, screen_h - real_h - margen)))
+
+        window.geometry(f"{real_w}x{real_h}+{x}+{y}")
+
+        if _segunda_pasada:
+            window.after(30, lambda: self._centrar_toplevel(window, width, height, False))
+
+    def _habilitar_pantalla_completa(self, window, close_on_esc: bool = False):
+        """Habilita F11 para maximizar/restaurar manteniendo controles de Windows."""
+        estado = {"max": False}
+
+        def _toggle(_event=None):
+            estado["max"] = not estado["max"]
+            window.state("zoomed" if estado["max"] else "normal")
+            return "break"
+
+        def _on_esc(_event=None):
+            if estado["max"]:
+                estado["max"] = False
+                window.state("normal")
+                return "break"
+            if close_on_esc:
+                window.destroy()
+                return "break"
+            return None
+
+        window.bind("<F11>", _toggle)
+        window.bind("<Escape>", _on_esc)
     
     def _crear_interfaz(self):
         """Crea la interfaz completa de la aplicación."""
@@ -639,15 +685,9 @@ class PantallaProcesamiento(ctk.CTk):
         ventana.configure(fg_color=COLOR_GRIS_FONDO)
         ventana.transient(self)
         ventana.grab_set()
+        self._habilitar_pantalla_completa(ventana)
 
-        # Bloquear cierre manual: esta ventana debe permanecer mientras dura el análisis.
-        ventana.protocol("WM_DELETE_WINDOW", lambda: None)
-        ventana.bind("<Alt-F4>", lambda _: "break")
-
-        w, h = 520, 360
-        ventana.update_idletasks()
-        sw, sh = ventana.winfo_screenwidth(), ventana.winfo_screenheight()
-        ventana.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        self._centrar_toplevel(ventana, 520, 360)
 
         _set_app_icon(ventana, delay=80)
 
@@ -677,6 +717,7 @@ class PantallaProcesamiento(ctk.CTk):
 
         self._carga_barra = ctk.CTkProgressBar(marco, width=360)
         self._carga_barra.pack(pady=(0, 10))
+        self._carga_barra.configure(progress_color="#FFC107", fg_color="#9AA5B1")
         self._carga_barra.set(self._progreso_global)
 
         ctk.CTkLabel(
@@ -1437,11 +1478,10 @@ class PantallaProcesamiento(ctk.CTk):
             ventana.configure(fg_color=COLOR_GRIS_FONDO)
             ventana.transient(self)
             ventana.grab_set()
+            self._habilitar_pantalla_completa(ventana)
 
             w, h = 1050, 710
-            ventana.update_idletasks()
-            sw, sh = ventana.winfo_screenwidth(), ventana.winfo_screenheight()
-            ventana.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+            self._centrar_toplevel(ventana, w, h)
 
             # Helpers internos
             def _construir_nombre() -> str:
@@ -1471,7 +1511,7 @@ class PantallaProcesamiento(ctk.CTk):
                     self._es_adjunto_editado = True
                     # Buscar la ruta completa del principal seleccionado
                     for ruta_p in self.historial_principales:
-                        if Path(ruta_p).stem == principal:
+                        if Path(ruta_p).name == principal:
                             self._principal_editado = Path(ruta_p)
                             break
                 else:
@@ -1540,6 +1580,7 @@ class PantallaProcesamiento(ctk.CTk):
             ).pack(side="right")
             barra_prog = ctk.CTkProgressBar(progreso_wrap)
             barra_prog.pack(fill="x", padx=10, pady=(0, 3))
+            barra_prog.configure(progress_color="#FFC107", fg_color="#9AA5B1")
             barra_prog.set(self._progreso_global)
             ctk.CTkLabel(
                 progreso_wrap,
@@ -1581,54 +1622,95 @@ class PantallaProcesamiento(ctk.CTk):
             # Panel izquierdo: miniatura
             left = ctk.CTkFrame(body)
             left.pack(side="left", fill="both", expand=True, padx=(0, 6))
+
+            # Badge de previsualización (estilo consistente con segmentación)
+            badge_prev_wrap = ctk.CTkFrame(left, fg_color="transparent")
+            badge_prev_wrap.pack(pady=(10, 4))
+            badge_prev = ctk.CTkFrame(badge_prev_wrap, fg_color="#EEF4FB", corner_radius=12)
+            badge_prev.pack()
             ctk.CTkLabel(
-                left, text="📄 Vista previa",
-                font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_AZUL_IPSD,
-            ).pack(pady=(10, 2))
+                badge_prev,
+                text="Documento",
+                font=ctk.CTkFont(size=9, weight="bold"),
+                text_color="#5A6A7D",
+            ).pack(side="left", padx=(10, 6), pady=6)
+            chip_prev = ctk.CTkFrame(badge_prev, fg_color=COLOR_AZUL_IPSD, corner_radius=999)
+            chip_prev.pack(side="left", padx=(0, 10), pady=5)
+            ctk.CTkLabel(
+                chip_prev,
+                text="Vista previa",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=COLOR_BLANCO,
+            ).pack(padx=10, pady=2)
+
             ctk.CTkLabel(
                 left, text=ruta_pdf.name, font=ctk.CTkFont(size=10),
                 wraplength=380, text_color=COLOR_GRIS_TEXTO,
             ).pack(pady=(0, 4))
-            img_prev = _miniatura_pdf(ruta_pdf, max_size=(390, 430))
-            if img_prev:
-                ctk_img = ctk.CTkImage(
-                    light_image=img_prev, dark_image=img_prev,
-                    size=(img_prev.width, img_prev.height),
-                )
-                setattr(ventana, '_ctk_img_e', ctk_img)
-                lbl_prev_img = ctk.CTkLabel(left, image=ctk_img, text="",
-                                            cursor="hand2")
-                lbl_prev_img.pack(expand=True, pady=(0, 2))
-                lbl_prev_img.bind("<Button-1>", lambda e: _abrir_zoom_pdf(ventana, ruta_pdf))
-                ctk.CTkLabel(left, text="🔍 Clic para zoom",
-                             font=ctk.CTkFont(size=9), text_color="#999999"
-                             ).pack(pady=(0, 6))
-            else:
-                ctk.CTkLabel(
-                    left, text="Vista previa no disponible", text_color="#999999",
-                ).pack(expand=True)
+            lbl_carga_prev = ctk.CTkLabel(
+                left,
+                text="Cargando vista previa...",
+                text_color="#7F8A99",
+                font=ctk.CTkFont(size=11),
+            )
+            lbl_carga_prev.pack(pady=(22, 6))
 
-            # Panel derecho: formulario
-            right = ctk.CTkFrame(body, fg_color="white")
+            def _worker_preview():
+                img_prev = _miniatura_pdf(ruta_pdf, max_size=(390, 430))
+
+                def _apply_preview():
+                    if not ventana.winfo_exists() or not left.winfo_exists():
+                        return
+                    try:
+                        lbl_carga_prev.destroy()
+                    except Exception:
+                        pass
+
+                    if img_prev:
+                        ctk_img = ctk.CTkImage(
+                            light_image=img_prev, dark_image=img_prev,
+                            size=(img_prev.width, img_prev.height),
+                        )
+                        setattr(ventana, '_ctk_img_e', ctk_img)
+                        lbl_prev_img = ctk.CTkLabel(left, image=ctk_img, text="",
+                                                    cursor="hand2")
+                        lbl_prev_img.pack(pady=(0, 2))
+                        lbl_prev_img.bind("<Button-1>", lambda e: _abrir_zoom_pdf(ventana, ruta_pdf))
+                        ctk.CTkLabel(left, text="🔍 Clic para zoom",
+                                     font=ctk.CTkFont(size=9), text_color="#999999"
+                                     ).pack(pady=(0, 6))
+                    else:
+                        ctk.CTkLabel(
+                            left, text="Vista previa no disponible", text_color="#999999",
+                        ).pack(expand=True)
+
+                self.after(0, _apply_preview)
+
+            threading.Thread(target=_worker_preview, daemon=True).start()
+
+            # Panel derecho: formulario (scrollable para evitar cortes)
+            right = ctk.CTkScrollableFrame(body, fg_color="white")
             right.pack(side="right", fill="both", expand=True, padx=(6, 0))
 
-            # Preview nombre
+            # Preview nombre (card)
+            preview_card = ctk.CTkFrame(right, fg_color="#F5F9FF", corner_radius=10)
+            preview_card.pack(fill="x", padx=10, pady=(8, 4))
             ctk.CTkLabel(
-                right, text="📝 Nombre resultante:",
+                preview_card, text="📝 Nombre resultante:",
                 font=ctk.CTkFont(size=11, weight="bold"), text_color=COLOR_GRIS_TEXTO,
-            ).pack(padx=14, pady=(12, 1), anchor="w")
+            ).pack(padx=12, pady=(6, 1), anchor="w")
             lbl_preview = ctk.CTkLabel(
-                right,
+                preview_card,
                 text=generar_nombre_limpio(tipo_doc, fecha, numero_doc, depto, sufijo, texto_contexto=texto_ocr),
                 font=ctk.CTkFont(size=12, weight="bold"),
                 text_color=COLOR_AZUL_IPSD, wraplength=400,
             )
-            lbl_preview.pack(padx=14, pady=(0, 4), anchor="w")
+            lbl_preview.pack(padx=12, pady=(0, 6), anchor="w")
             _vars["lbl_preview"] = lbl_preview
 
             lbl_err = ctk.CTkLabel(right, text="", font=ctk.CTkFont(size=10),
                                    text_color="#CC0000")
-            lbl_err.pack(padx=14, anchor="w")
+            lbl_err.pack(padx=14, pady=(0, 1), anchor="w")
             _vars["lbl_err"] = lbl_err
 
             tk.Frame(right, bg="#E0E0E0", height=1).pack(fill="x", padx=14, pady=(4, 0))
@@ -1705,17 +1787,17 @@ class PantallaProcesamiento(ctk.CTk):
             _vars["v_es_adjunto"] = var_es_adjunto
 
             seccion_adjunto = ctk.CTkFrame(right, fg_color="#F6FAFF", corner_radius=10)
-            seccion_adjunto.pack(fill="x", padx=14, pady=(10, 6))
+            seccion_adjunto.pack(fill="x", padx=14, pady=(8, 4))
 
             ctk.CTkLabel(
                 seccion_adjunto,
                 text="Modo de guardado",
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color=COLOR_AZUL_IPSD,
-            ).pack(anchor="w", padx=12, pady=(8, 2))
+            ).pack(anchor="w", padx=12, pady=(6, 2))
 
             fila_adjunto = ctk.CTkFrame(seccion_adjunto, fg_color="transparent")
-            fila_adjunto.pack(fill="x", padx=10, pady=(0, 8))
+            fila_adjunto.pack(fill="x", padx=10, pady=(0, 4))
 
             checkbox_adjunto = ctk.CTkCheckBox(
                 fila_adjunto,
@@ -1735,35 +1817,54 @@ class PantallaProcesamiento(ctk.CTk):
                 text_color=COLOR_GRIS_TEXTO,
             ).pack(side="left", padx=(16, 6))
 
-            lista_principales = [Path(ruta).stem for ruta in self.historial_principales]
-            combo_principal = ctk.CTkComboBox(
+            lista_principales = [Path(ruta).name for ruta in self.historial_principales]
+            var_principal = ctk.StringVar(
+                value=lista_principales[0] if lista_principales else "(Sin documentos anteriores)"
+            )
+            combo_principal = ctk.CTkOptionMenu(
                 fila_adjunto,
                 values=lista_principales if lista_principales else ["(Sin documentos anteriores)"],
-                state="disabled",
-                width=220,
-                height=30,
-                border_color=COLOR_AZUL_IPSD,
+                variable=var_principal,
+                width=320,
+                height=36,
+                fg_color="#0D4A8F",
+                button_color="#0D4A8F",
+                button_hover_color="#083563",
+                dropdown_fg_color="#F7FAFF",
+                dropdown_hover_color="#E7F0FF",
+                dropdown_text_color="#0D4A8F",
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(size=11, weight="bold"),
             )
             combo_principal.pack(side="left", padx=6)
-            if lista_principales:
-                combo_principal.set(lista_principales[0])
+            combo_principal.configure(state="disabled")
             _vars["v_principal"] = combo_principal
+
+            lbl_principal_full = ctk.CTkLabel(
+                seccion_adjunto,
+                text="",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=COLOR_AZUL_IPSD,
+                wraplength=430,
+                justify="left",
+            )
+            lbl_principal_full.pack(anchor="w", padx=12, pady=(0, 2))
 
             ctk.CTkLabel(
                 seccion_adjunto,
                 text="Si está marcado como adjunto, el nombre se toma del documento principal.",
                 font=ctk.CTkFont(size=9),
                 text_color="#5E6E80",
-            ).pack(anchor="w", padx=12, pady=(0, 8))
+            ).pack(anchor="w", padx=12, pady=(0, 6))
 
             # Fila de tipo
-            fila_tipo = ctk.CTkFrame(right, fg_color="transparent")
-            fila_tipo.pack(fill="x", padx=14, pady=(7, 1))
+            fila_tipo = ctk.CTkFrame(right, fg_color="#F8FAFD", corner_radius=8)
+            fila_tipo.pack(fill="x", padx=14, pady=(8, 2))
             ctk.CTkLabel(
                 fila_tipo, text="✅ Tipo de archivo",
                 font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=COLOR_AZUL_IPSD, width=160, anchor="w",
-            ).pack(side="left")
+                text_color=COLOR_AZUL_IPSD, width=150, anchor="w",
+            ).pack(side="left", padx=(10, 6), pady=8)
             var_tipo = ctk.StringVar(value=tipo_doc if tipo_doc in tipos_disponibles else "DOCUMENTO")
             var_tipo.trace_add("write", _actualizar_preview)
             _vars["v_tipo"] = var_tipo
@@ -1772,15 +1873,16 @@ class PantallaProcesamiento(ctk.CTk):
                 values=tipos_disponibles,
                 variable=var_tipo,
                 width=230,
-                height=32,
-                fg_color=COLOR_AZUL_IPSD,
-                button_color="#13689E",
-                button_hover_color="#0F5178",
+                height=36,
+                fg_color="#0D4A8F",
+                button_color="#0B3F79",
+                button_hover_color="#083563",
                 dropdown_fg_color="#FFFFFF",
-                dropdown_hover_color="#EBF3FF",
-                dropdown_text_color=COLOR_AZUL_IPSD,
+                dropdown_hover_color="#EFF5FF",
+                dropdown_text_color="#0D4A8F",
                 text_color="#FFFFFF",
-            ).pack(side="left")
+                font=ctk.CTkFont(size=12, weight="bold"),
+            ).pack(side="left", padx=(2, 10), pady=6)
 
             # Filas de campos (las guardaremos para poder ocultarlas/mostrarlas)
             campo_num_frame = None
@@ -1834,8 +1936,8 @@ class PantallaProcesamiento(ctk.CTk):
                 ctk.CTkLabel(
                     fila, text=f"{ic} {label}",
                     font=ctk.CTkFont(size=11, weight="bold"),
-                    text_color=cc, width=160, anchor="w",
-                ).pack(side="left")
+                    text_color=cc, width=150, anchor="w",
+                ).pack(side="left", padx=(4, 6), pady=4)
 
                 if readonly:
                     ctk.CTkLabel(
@@ -1850,9 +1952,10 @@ class PantallaProcesamiento(ctk.CTk):
                 _vars[var_key] = var
                 entry = ctk.CTkEntry(
                     fila, textvariable=var,
-                    font=ctk.CTkFont(size=12), height=32, border_color=bc,
+                    font=ctk.CTkFont(size=12), height=36,
+                    border_color=bc, fg_color="#FFFFFF", corner_radius=8,
                 )
-                entry.pack(side="left", fill="x", expand=True)
+                entry.pack(side="left", fill="x", expand=True, padx=(0, 4), pady=4)
 
                 if is_date:
                     ctk.CTkButton(
@@ -1886,10 +1989,25 @@ class PantallaProcesamiento(ctk.CTk):
             _crear_campo_fec()
             
             if sufijo:
-                fila_sufijo = ctk.CTkFrame(right, fg_color="transparent")
+                fila_sufijo = ctk.CTkFrame(right, fg_color="#F6FAFF", corner_radius=10)
                 if not var_es_adjunto.get():
                     fila_sufijo.pack(fill="x", padx=14, pady=(7, 1))
                 _campo_impl("Sufijo", sufijo, [], "v_sfx", readonly=True, parent_frame=fila_sufijo)
+
+            # Aplicar mismo sombreado azul al resto de campos del formulario.
+            if campo_num_frame is not None:
+                campo_num_frame.configure(fg_color="#F6FAFF", corner_radius=10)
+            if campo_depto_frame is not None:
+                campo_depto_frame.configure(fg_color="#F6FAFF", corner_radius=10)
+            if campo_fec_frame is not None:
+                campo_fec_frame.configure(fg_color="#F6FAFF", corner_radius=10)
+
+            def _actualizar_principal_full(*_):
+                seleccionado = combo_principal.get().strip()
+                if seleccionado and seleccionado != "(Sin documentos anteriores)":
+                    lbl_principal_full.configure(text=f"Seleccionado: {seleccionado}")
+                else:
+                    lbl_principal_full.configure(text="")
 
             def _toggle_adjunto():
                 es_adj = var_es_adjunto.get()
@@ -1933,15 +2051,17 @@ class PantallaProcesamiento(ctk.CTk):
                     if _vars["lbl_err"].cget("text") == "⚠️  Para adjunto debes seleccionar un documento principal.":
                         _vars["lbl_err"].configure(text="")
 
-            combo_principal.configure(command=lambda _value: _actualizar_estado_confirmar())
-            combo_principal.bind("<KeyRelease>", _actualizar_estado_confirmar)
+            def _on_principal_change(_value=None):
+                _actualizar_principal_full()
+                _actualizar_estado_confirmar()
+
+            combo_principal.configure(command=_on_principal_change)
+            combo_principal.bind("<KeyRelease>", lambda _e: _on_principal_change())
 
             _toggle_adjunto()
+            _actualizar_principal_full()
             _actualizar_estado_confirmar()
 
-            # En esta etapa el usuario debe elegir acción con botones del flujo.
-            ventana.protocol("WM_DELETE_WINDOW", lambda: None)
-            ventana.bind("<Alt-F4>", lambda _: "break")
             ventana.wait_window()
             evento.set()
 

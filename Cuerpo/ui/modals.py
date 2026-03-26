@@ -11,6 +11,7 @@ Módulo que contiene:
 """
 
 import tkinter as tk
+import threading
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -109,6 +110,29 @@ def _set_app_icon(window, delay: int = 0):
         _apply()
 
 
+def _habilitar_pantalla_completa(window, close_on_esc: bool = False):
+    """Activa F11 para alternar ventana maximizada (manteniendo controles Windows)."""
+    estado = {"max": False}
+
+    def _toggle(_event=None):
+        estado["max"] = not estado["max"]
+        window.state("zoomed" if estado["max"] else "normal")
+        return "break"
+
+    def _on_esc(_event=None):
+        if estado["max"]:
+            estado["max"] = False
+            window.state("normal")
+            return "break"
+        if close_on_esc:
+            window.destroy()
+            return "break"
+        return None
+
+    window.bind("<F11>", _toggle)
+    window.bind("<Escape>", _on_esc)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # HELPER - ZOOM PDF
 # ═════════════════════════════════════════════════════════════════════════════
@@ -127,13 +151,10 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
     ventana.grab_set()
     ventana.resizable(True, True)
     ventana.minsize(480, 500)
-    ventana.bind("<Escape>", lambda e: ventana.destroy())
     _set_app_icon(ventana, delay=150)
+    _habilitar_pantalla_completa(ventana, close_on_esc=True)
 
-    w, h = 700, 820
-    ventana.update_idletasks()
-    sw, sh = ventana.winfo_screenwidth(), ventana.winfo_screenheight()
-    ventana.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+    _centrar_ventana(ventana, 700, 820, parent)
 
     # --- Renderizar a 200 DPI ---
     try:
@@ -191,10 +212,6 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
              text="🖱 Rueda: zoom   │   Clic+arrastrar: mover",
              font=("Segoe UI", 9), bg="#1C1F2E", fg="#7AADCA"
              ).pack(side="right", padx=(0, 6))
-    tk.Button(toolbar, text=" ✕ Cerrar ", command=ventana.destroy,
-              font=("Segoe UI", 9, "bold"), bg="#8B1A1A", fg="white",
-              activebackground="#CC2222", activeforeground="white",
-              relief="flat", padx=6).pack(side="right", padx=6, pady=5)
 
     # --- Canvas scrollable ---
     canvas_frame = tk.Frame(ventana, bg="#2B2B2B")
@@ -223,6 +240,7 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
         canvas.configure(scrollregion=(0, 0, nw, nh))
 
     _render()
+    ventana.after(40, lambda: _centrar_ventana(ventana, 700, 820, parent, False))
 
     # Scroll wheel zoom
     def _on_wheel(event):
@@ -260,15 +278,14 @@ def _abrir_calendario(parent, var_fecha: "ctk.StringVar", on_change=None):
 
     popup = tk.Toplevel(parent)
     popup.title("Seleccionar fecha")
-    popup.resizable(False, False)
+    popup.resizable(True, True)
+    popup.minsize(330, 290)
     popup.grab_set()
     popup.configure(bg="white")
     _set_app_icon(popup, delay=100)
+    _habilitar_pantalla_completa(popup)
 
-    popup.update_idletasks()
-    sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
-    w, h = 330, 290
-    popup.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+    _centrar_ventana(popup, 330, 290, parent)
 
     MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
              "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
@@ -397,6 +414,7 @@ def _crear_bloque_progreso(parent, progreso: float, etapa: str):
 
     barra = ctk.CTkProgressBar(cont, width=100)
     barra.pack(fill="x", padx=10, pady=(0, 4))
+    barra.configure(progress_color="#FFC107", fg_color="#9AA5B1")
     barra.set(p)
 
     if etapa:
@@ -430,6 +448,87 @@ def _crear_badge_pagina(parent, titulo: str, numero: int, color: str):
     ).pack(padx=10, pady=2)
 
 
+def _centrar_ventana(window, width: int, height: int, parent=None, _segunda_pasada: bool = True):
+    """Centra una ventana de forma consistente en pantalla (sin desvío hacia abajo)."""
+    _ = parent  # Reservado para uso futuro; centrado actual es por pantalla.
+    if _segunda_pasada:
+        window.geometry(f"{width}x{height}")
+    window.update_idletasks()
+
+    screen_w = int(window.winfo_screenwidth())
+    screen_h = int(window.winfo_screenheight())
+
+    margen = 24
+    real_w = min(int(width), max(620, screen_w - (margen * 2)))
+    real_h = min(int(height), max(520, screen_h - (margen * 2)))
+
+    x = max(margen, (screen_w - real_w) // 2)
+    y = max(margen, (screen_h - real_h) // 2)
+
+    window.geometry(f"{real_w}x{real_h}+{x}+{y}")
+
+    # Recentrar una vez más tras el primer layout para evitar corrimiento por DPI/WM.
+    if _segunda_pasada:
+        window.after(30, lambda: _centrar_ventana(window, width, height, None, False))
+
+
+def _cargar_miniatura_async(owner, container, loader_fn, zoom_fn):
+    """Carga miniaturas en segundo plano para evitar congelar la UI."""
+    placeholder = ctk.CTkLabel(
+        container,
+        text="Cargando vista previa...",
+        text_color="#7F8A99",
+        font=ctk.CTkFont(size=11),
+    )
+    placeholder.pack(pady=(22, 6))
+
+    def _worker():
+        img = None
+        try:
+            img = loader_fn()
+        except Exception:
+            img = None
+
+        def _apply():
+            if not owner.winfo_exists() or not container.winfo_exists():
+                return
+
+            try:
+                placeholder.destroy()
+            except Exception:
+                pass
+
+            if img is None:
+                ctk.CTkLabel(
+                    container,
+                    text="Vista previa no disponible",
+                    text_color="#999999",
+                    font=ctk.CTkFont(size=11),
+                ).pack(expand=True)
+                return
+
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+            if not hasattr(owner, "_img_refs"):
+                owner._img_refs = []
+            owner._img_refs.append(ctk_img)
+
+            lbl = ctk.CTkLabel(container, image=ctk_img, text="", cursor="hand2")
+            lbl.pack(pady=(4, 2))
+            if zoom_fn:
+                lbl.bind("<Button-1>", lambda e: zoom_fn())
+
+            ctk.CTkLabel(
+                container,
+                text="🔍 Clic para zoom",
+                font=ctk.CTkFont(size=9),
+                text_color="#999999",
+            ).pack(pady=(0, 6))
+
+        owner.after(0, _apply)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # CLASE: VENTANA CONSULTA SEPARACIÓN DE DOCUMENTOS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -457,6 +556,12 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         self.progreso = progreso
         self.etapa = etapa
         self.decision = None  # "mismo" o "diferente"
+
+        # Escalado de miniaturas según pantalla para evitar espacios vacíos/cortes.
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        self._thumb_max_w = max(320, min(520, int(sw * 0.34)))
+        self._thumb_max_h = max(360, min(620, int(sh * 0.58)))
         
         # Configuración ventana
         if self.modo_lista:
@@ -468,21 +573,13 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         self.configure(fg_color=COLOR_GRIS_FONDO)
         
         # Centrar ventana
-        _W, _H = 1000, 750
-        self.update_idletasks()
-        _sw = self.winfo_screenwidth()
-        _sh = self.winfo_screenheight()
-        _px = (_sw - _W) // 2
-        _py = (_sh - _H) // 2
-        self.geometry(f"{_W}x{_H}+{_px}+{_py}")
+        _centrar_ventana(self, 1000, 750, parent)
         
         # Modal
         self.transient(parent)
         self.grab_set()
-        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
-        self.protocol("WM_DELETE_WINDOW", lambda: None)
-        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
+        _habilitar_pantalla_completa(self)
         
         self._crear_interfaz()
     
@@ -506,13 +603,7 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         _crear_bloque_progreso(self, self.progreso, self.etapa)
         
         # ===== INFO =====
-        info_frame = ctk.CTkFrame(self, fg_color="transparent")
-        info_frame.pack(fill="x", padx=20, pady=(8, 0))
-
-        fila_badges = ctk.CTkFrame(info_frame, fg_color="transparent")
-        fila_badges.pack()
-        _crear_badge_pagina(fila_badges, "Documento Anterior", self.num_pagina_anterior, COLOR_AZUL_IPSD)
-        _crear_badge_pagina(fila_badges, "Documento Actual", self.num_pagina_actual, "#FF6B00")
+        # Sin fila extra: los badges viven dentro de ANTERIOR/ACTUAL.
         
         # ===== BOTONES (ABAJO) =====
         botones_frame = ctk.CTkFrame(self, fg_color="white", corner_radius=0)
@@ -597,71 +688,47 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         
         # ===== COMPARACIÓN (CENTRO) =====
         comparacion_frame = ctk.CTkFrame(self)
-        comparacion_frame.pack(fill="both", expand=True, padx=15, pady=8)
+        comparacion_frame.pack(fill="both", expand=True, padx=15, pady=(4, 8))
         
         # Anterior (izquierda)
         doc_ant_frame = ctk.CTkFrame(comparacion_frame)
         doc_ant_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
         
-        ctk.CTkLabel(
-            doc_ant_frame,
-            text="📄 ANTERIOR",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=COLOR_AZUL_IPSD
-        ).pack(pady=(8, 2))
-
         badge_ant_wrap = ctk.CTkFrame(doc_ant_frame, fg_color="transparent")
-        badge_ant_wrap.pack(pady=(0, 5))
-        _crear_badge_pagina(badge_ant_wrap, "Referencia", self.num_pagina_anterior, COLOR_AZUL_IPSD)
+        badge_ant_wrap.pack(pady=(8, 5))
+        _crear_badge_pagina(badge_ant_wrap, "Documento Anterior", self.num_pagina_anterior, COLOR_AZUL_IPSD)
         
-        # Miniatura anterior
-        img_ant = _miniatura_pdf(self.pdf_ruta, self.num_pagina_anterior, max_size=(400, 430))
-        if img_ant:
-            self._ctk_img_ant = ctk.CTkImage(light_image=img_ant, dark_image=img_ant,
-                                              size=(img_ant.width, img_ant.height))
-            lbl_ant = ctk.CTkLabel(doc_ant_frame, image=self._ctk_img_ant, text="",
-                                    cursor="hand2")
-            lbl_ant.pack(expand=True, pady=(4, 2))
-            lbl_ant.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.pdf_ruta, self.num_pagina_anterior))
-            ctk.CTkLabel(doc_ant_frame, text="🔍 Clic para zoom",
-                         font=ctk.CTkFont(size=9), text_color="#999999"
-                         ).pack(pady=(0, 6))
-        else:
-            ctk.CTkLabel(doc_ant_frame, text="Vista previa no disponible",
-                         text_color="#999999", font=ctk.CTkFont(size=11)
-                         ).pack(expand=True)
+        # Miniatura anterior (asíncrona)
+        _cargar_miniatura_async(
+            self,
+            doc_ant_frame,
+            lambda: _miniatura_pdf(
+                self.pdf_ruta,
+                self.num_pagina_anterior,
+                max_size=(self._thumb_max_w, self._thumb_max_h),
+            ),
+            lambda: _abrir_zoom_pdf(self, self.pdf_ruta, self.num_pagina_anterior),
+        )
         
         # Actual (derecha)
         doc_act_frame = ctk.CTkFrame(comparacion_frame)
         doc_act_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
         
-        ctk.CTkLabel(
-            doc_act_frame,
-            text="📄 ACTUAL",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#FF6B00"
-        ).pack(pady=(8, 2))
-
         badge_act_wrap = ctk.CTkFrame(doc_act_frame, fg_color="transparent")
-        badge_act_wrap.pack(pady=(0, 5))
-        _crear_badge_pagina(badge_act_wrap, "Comparación", self.num_pagina_actual, "#FF6B00")
+        badge_act_wrap.pack(pady=(8, 5))
+        _crear_badge_pagina(badge_act_wrap, "Documento Actual", self.num_pagina_actual, "#FF6B00")
         
-        # Miniatura actual
-        img_act = _miniatura_pdf(self.pdf_ruta, self.num_pagina_actual, max_size=(400, 430))
-        if img_act:
-            self._ctk_img_act = ctk.CTkImage(light_image=img_act, dark_image=img_act,
-                                              size=(img_act.width, img_act.height))
-            lbl_act = ctk.CTkLabel(doc_act_frame, image=self._ctk_img_act, text="",
-                                    cursor="hand2")
-            lbl_act.pack(expand=True, pady=(4, 2))
-            lbl_act.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.pdf_ruta, self.num_pagina_actual))
-            ctk.CTkLabel(doc_act_frame, text="🔍 Clic para zoom",
-                         font=ctk.CTkFont(size=9), text_color="#999999"
-                         ).pack(pady=(0, 6))
-        else:
-            ctk.CTkLabel(doc_act_frame, text="Vista previa no disponible",
-                         text_color="#999999", font=ctk.CTkFont(size=11)
-                         ).pack(expand=True)
+        # Miniatura actual (asíncrona)
+        _cargar_miniatura_async(
+            self,
+            doc_act_frame,
+            lambda: _miniatura_pdf(
+                self.pdf_ruta,
+                self.num_pagina_actual,
+                max_size=(self._thumb_max_w, self._thumb_max_h),
+            ),
+            lambda: _abrir_zoom_pdf(self, self.pdf_ruta, self.num_pagina_actual),
+        )
     
     def _tomar_decision(self, decision: str):
         """Registra la decisión y cierra la ventana."""
@@ -707,22 +774,14 @@ class VentanaVerificacion(ctk.CTkToplevel):
         self.minsize(800, 650)
         self.configure(fg_color=COLOR_GRIS_FONDO)
         
-        # Centrar ventana (calcular posición ANTES de construir la UI)
-        _W, _H = 1000, 750
-        self.update_idletasks()
-        _sw = self.winfo_screenwidth()
-        _sh = self.winfo_screenheight()
-        _px = (_sw - _W) // 2
-        _py = (_sh - _H) // 2
-        self.geometry(f"{_W}x{_H}+{_px}+{_py}")
+        # Centrar ventana
+        _centrar_ventana(self, 1000, 750, parent)
         
         # Modal
         self.transient(parent)
         self.grab_set()
-        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
-        self.protocol("WM_DELETE_WINDOW", lambda: None)
-        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
+        _habilitar_pantalla_completa(self)
         
         self._crear_interfaz()
     
@@ -829,22 +888,13 @@ class VentanaVerificacion(ctk.CTkToplevel):
             text_color=COLOR_GRIS_TEXTO
         ).pack(pady=(0, 5))
         
-        # --- Miniatura Documento 1 ---
-        img1 = _miniatura_pdf(self.archivo1, max_size=(400, 430))
-        if img1:
-            self._ctk_img1 = ctk.CTkImage(light_image=img1, dark_image=img1,
-                                           size=(img1.width, img1.height))
-            lbl1 = ctk.CTkLabel(doc1_frame, image=self._ctk_img1, text="",
-                                 cursor="hand2")
-            lbl1.pack(expand=True, pady=(4, 2))
-            lbl1.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.archivo1))
-            ctk.CTkLabel(doc1_frame, text="🔍 Clic para zoom",
-                         font=ctk.CTkFont(size=9), text_color="#999999"
-                         ).pack(pady=(0, 6))
-        else:
-            ctk.CTkLabel(doc1_frame, text="Vista previa no disponible",
-                         text_color="#999999", font=ctk.CTkFont(size=11)
-                         ).pack(expand=True)
+        # --- Miniatura Documento 1 (asíncrona) ---
+        _cargar_miniatura_async(
+            self,
+            doc1_frame,
+            lambda: _miniatura_pdf(self.archivo1, max_size=(400, 430)),
+            lambda: _abrir_zoom_pdf(self, self.archivo1),
+        )
 
         # Documento 2 (derecha)
         doc2_frame = ctk.CTkFrame(comparacion_frame)
@@ -865,22 +915,13 @@ class VentanaVerificacion(ctk.CTkToplevel):
             text_color=COLOR_GRIS_TEXTO
         ).pack(pady=(0, 5))
 
-        # --- Miniatura Documento 2 ---
-        img2 = _miniatura_pdf(self.archivo2, max_size=(400, 430))
-        if img2:
-            self._ctk_img2 = ctk.CTkImage(light_image=img2, dark_image=img2,
-                                           size=(img2.width, img2.height))
-            lbl2 = ctk.CTkLabel(doc2_frame, image=self._ctk_img2, text="",
-                                 cursor="hand2")
-            lbl2.pack(expand=True, pady=(4, 2))
-            lbl2.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, self.archivo2))
-            ctk.CTkLabel(doc2_frame, text="🔍 Clic para zoom",
-                         font=ctk.CTkFont(size=9), text_color="#999999"
-                         ).pack(pady=(0, 6))
-        else:
-            ctk.CTkLabel(doc2_frame, text="Vista previa no disponible",
-                         text_color="#999999", font=ctk.CTkFont(size=11)
-                         ).pack(expand=True)
+        # --- Miniatura Documento 2 (asíncrona) ---
+        _cargar_miniatura_async(
+            self,
+            doc2_frame,
+            lambda: _miniatura_pdf(self.archivo2, max_size=(400, 430)),
+            lambda: _abrir_zoom_pdf(self, self.archivo2),
+        )
     
     def _tomar_decision(self, decision: str):
         """Registra la decisión del usuario y cierra la ventana."""
@@ -930,18 +971,12 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
         self.minsize(800, 580)
         self.configure(fg_color=COLOR_GRIS_FONDO)
 
-        _W, _H = 1000, 700
-        self.update_idletasks()
-        _sw = self.winfo_screenwidth()
-        _sh = self.winfo_screenheight()
-        self.geometry(f"{_W}x{_H}+{(_sw - _W) // 2}+{(_sh - _H) // 2}")
+        _centrar_ventana(self, 1000, 700, parent)
 
         self.transient(parent)
         self.grab_set()
-        # Esta ventana requiere una decisión explícita; no se permite cerrar por X.
-        self.protocol("WM_DELETE_WINDOW", lambda: None)
-        self.bind("<Alt-F4>", lambda _: "break")
         _set_app_icon(self, delay=150)
+        _habilitar_pantalla_completa(self)
 
         self._crear_interfaz()
 
@@ -1026,20 +1061,13 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
             text_color=COLOR_GRIS_TEXTO
         ).pack(pady=(0, 5))
         if self.ruta_previo and self.ruta_previo.exists():
-            img1 = _miniatura_pdf(self.ruta_previo, max_size=(400, 380))
-            if img1:
-                self._ctk_img1 = ctk.CTkImage(light_image=img1, dark_image=img1,
-                                               size=(img1.width, img1.height))
-                lbl1 = ctk.CTkLabel(f1, image=self._ctk_img1, text="", cursor="hand2")
-                lbl1.pack(expand=True, pady=(4, 2))
-                # Usar variable local para asegurar que no es None en el lambda
-                ruta_p1 = self.ruta_previo
-                lbl1.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, ruta_p1))
-                ctk.CTkLabel(f1, text="🔍 Clic para zoom",
-                             font=ctk.CTkFont(size=9), text_color="#999999").pack(pady=(0, 6))
-            else:
-                ctk.CTkLabel(f1, text="Vista previa no disponible",
-                             text_color="#999999", font=ctk.CTkFont(size=11)).pack(expand=True)
+            ruta_p1 = self.ruta_previo
+            _cargar_miniatura_async(
+                self,
+                f1,
+                lambda: _miniatura_pdf(ruta_p1, max_size=(400, 380)),
+                lambda: _abrir_zoom_pdf(self, ruta_p1),
+            )
         else:
             ctk.CTkLabel(f1, text="Vista previa no disponible",
                          text_color="#999999", font=ctk.CTkFont(size=11)).pack(expand=True)
@@ -1058,20 +1086,13 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
             text_color=COLOR_GRIS_TEXTO
         ).pack(pady=(0, 5))
         if self.ruta_nuevo and self.ruta_nuevo.exists():
-            img2 = _miniatura_pdf(self.ruta_nuevo, max_size=(400, 380))
-            if img2:
-                self._ctk_img2 = ctk.CTkImage(light_image=img2, dark_image=img2,
-                                               size=(img2.width, img2.height))
-                lbl2 = ctk.CTkLabel(f2, image=self._ctk_img2, text="", cursor="hand2")
-                lbl2.pack(expand=True, pady=(4, 2))
-                # Usar variable local para asegurar que no es None en el lambda
-                ruta_p2 = self.ruta_nuevo
-                lbl2.bind("<Button-1>", lambda e: _abrir_zoom_pdf(self, ruta_p2))
-                ctk.CTkLabel(f2, text="🔍 Clic para zoom",
-                             font=ctk.CTkFont(size=9), text_color="#999999").pack(pady=(0, 6))
-            else:
-                ctk.CTkLabel(f2, text="Vista previa no disponible",
-                             text_color="#999999", font=ctk.CTkFont(size=11)).pack(expand=True)
+            ruta_p2 = self.ruta_nuevo
+            _cargar_miniatura_async(
+                self,
+                f2,
+                lambda: _miniatura_pdf(ruta_p2, max_size=(400, 380)),
+                lambda: _abrir_zoom_pdf(self, ruta_p2),
+            )
         else:
             ctk.CTkLabel(f2, text="Vista previa no disponible",
                          text_color="#999999", font=ctk.CTkFont(size=11)).pack(expand=True)

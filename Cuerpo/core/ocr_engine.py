@@ -168,12 +168,12 @@ def _miniatura_pdf(ruta_pdf: Path, num_pagina: int = 1, max_size: tuple = (380, 
         if POPPLER_PATH.exists():
             imagenes = convert_from_path(
                 str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
-                poppler_path=str(POPPLER_PATH), dpi=100
+                poppler_path=str(POPPLER_PATH), dpi=85
             )
         else:
             imagenes = convert_from_path(
                 str(ruta_pdf), first_page=num_pagina, last_page=num_pagina,
-                dpi=100
+                dpi=85
             )
         if not imagenes:
             _MINIATURA_CACHE[cache_key] = None
