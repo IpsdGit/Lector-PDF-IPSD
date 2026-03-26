@@ -161,6 +161,8 @@ class PantallaProcesamiento(ctk.CTk):
         self.var_salida = tk.StringVar()
         # Historial de Documentos Principales guardados en sesión actual
         self.historial_principales = []
+        # Mapeo nombre → ruta para búsquedas de adjuntos (evita falsos positivos)
+        self._principal_name_to_path: dict[str, str] = {}
         # Atributos para ventanas modales
         self._es_adjunto_editado: bool = False
         self._principal_editado: Optional[Path] = None
@@ -189,14 +191,20 @@ class PantallaProcesamiento(ctk.CTk):
                 if px[3] > 200:
                     samples.append(px[:3])
         if not samples:
-            flat = list(img.getdata())
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=DeprecationWarning)
+                flat = list(img.getdata())
             samples = [px[:3] for px in flat if px[3] > 100][:1]
         if not samples:
             return img
         br = sum(s[0] for s in samples) // len(samples)
         bg_g = sum(s[1] for s in samples) // len(samples)
         bb = sum(s[2] for s in samples) // len(samples)
-        flat = list(img.getdata())
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            flat = list(img.getdata())
         new = []
         for r, g, b, a in flat:
             if a > 30:
@@ -209,6 +217,12 @@ class PantallaProcesamiento(ctk.CTk):
 
     def _centrar_toplevel(self, window, width: int, height: int, _segunda_pasada: bool = True):
         """Centra una ventana secundaria con ajuste robusto por pantalla y parent."""
+        try:
+            if window.state() == "zoomed":
+                return
+        except Exception:
+            pass
+
         if _segunda_pasada:
             window.geometry(f"{width}x{height}")
         window.update_idletasks()
@@ -232,26 +246,9 @@ class PantallaProcesamiento(ctk.CTk):
             window.after(30, lambda: self._centrar_toplevel(window, width, height, False))
 
     def _habilitar_pantalla_completa(self, window, close_on_esc: bool = False):
-        """Habilita F11 para maximizar/restaurar manteniendo controles de Windows."""
-        estado = {"max": False}
-
-        def _toggle(_event=None):
-            estado["max"] = not estado["max"]
-            window.state("zoomed" if estado["max"] else "normal")
-            return "break"
-
-        def _on_esc(_event=None):
-            if estado["max"]:
-                estado["max"] = False
-                window.state("normal")
-                return "break"
-            if close_on_esc:
-                window.destroy()
-                return "break"
-            return None
-
-        window.bind("<F11>", _toggle)
-        window.bind("<Escape>", _on_esc)
+        """Delegado a modals._habilitar_pantalla_completa para evitar duplicación."""
+        from ui.modals import _habilitar_pantalla_completa as _fullscreen
+        _fullscreen(window, close_on_esc)
     
     def _crear_interfaz(self):
         """Crea la interfaz completa de la aplicación."""
@@ -683,8 +680,9 @@ class PantallaProcesamiento(ctk.CTk):
         ventana.title("Analizando documentos")
         ventana.resizable(False, False)
         ventana.configure(fg_color=COLOR_GRIS_FONDO)
-        ventana.transient(self)
         ventana.grab_set()
+        ventana.lift()
+        ventana.focus_force()
         self._habilitar_pantalla_completa(ventana)
 
         self._centrar_toplevel(ventana, 520, 360)
@@ -1476,8 +1474,9 @@ class PantallaProcesamiento(ctk.CTk):
             ventana.resizable(True, True)
             ventana.minsize(860, 540)
             ventana.configure(fg_color=COLOR_GRIS_FONDO)
-            ventana.transient(self)
             ventana.grab_set()
+            ventana.lift()
+            ventana.focus_force()
             self._habilitar_pantalla_completa(ventana)
 
             w, h = 1050, 710
@@ -1509,11 +1508,17 @@ class PantallaProcesamiento(ctk.CTk):
                         return
                     # Guardar información del adjunto
                     self._es_adjunto_editado = True
-                    # Buscar la ruta completa del principal seleccionado
-                    for ruta_p in self.historial_principales:
-                        if Path(ruta_p).name == principal:
+                    # Buscar la ruta completa del principal (usa mapeo para evitar falsos positivos)
+                    if hasattr(self, '_principal_name_to_path'):
+                        ruta_p = self._principal_name_to_path.get(principal)
+                        if ruta_p:
                             self._principal_editado = Path(ruta_p)
-                            break
+                    else:
+                        # Fallback si mapeo no existe
+                        for ruta_p in self.historial_principales:
+                            if Path(ruta_p).name == principal:
+                                self._principal_editado = Path(ruta_p)
+                                break
                 else:
                     # Si es documento principal, REQUIERE FECHA
                     f = _vars["v_fec"].get().strip()
@@ -1818,6 +1823,8 @@ class PantallaProcesamiento(ctk.CTk):
             ).pack(side="left", padx=(16, 6))
 
             lista_principales = [Path(ruta).name for ruta in self.historial_principales]
+            # Mapeo nombre → ruta para búsquedas precisas (evita falsos positivos si hay nombres duplicados)
+            self._principal_name_to_path = {Path(ruta).name: ruta for ruta in self.historial_principales}
             var_principal = ctk.StringVar(
                 value=lista_principales[0] if lista_principales else "(Sin documentos anteriores)"
             )

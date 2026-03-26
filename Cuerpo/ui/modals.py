@@ -36,15 +36,23 @@ _ICON_REF = None   # PhotoImage global para iconphoto (evita GC)
 
 def _preparar_icono() -> Optional[Path]:
     """
-    Genera Assets/Logo_App.ico a partir del PNG sin alterarlo (mantiene transparencia y proporciones).
-    Solo redimensiona a diferentes tamaños manteniendo la relación de aspecto.
+    Busca o genera Assets/Logo_App.ico.
+    Prioridad: 1. Usar .ico existente sin modificarlo (permite iconos personalizados)
+               2. Generar desde Logo_App.png si no existe (fallback automático)
     """
     global _ICO_PATH
     if _ICO_PATH is not None:
         return _ICO_PATH
     try:
-        src = ASSETS_PATH / "Logo_App.png"
         dst = ASSETS_PATH / "Logo_App.ico"
+        
+        # ✅ Si el .ico ya existe, usarlo directamente sin regenerar
+        if dst.exists():
+            _ICO_PATH = dst
+            return _ICO_PATH
+        
+        # Fallback: generar desde PNG si no existe el .ico
+        src = ASSETS_PATH / "Logo_App.png"
         if not src.exists():
             return None
         
@@ -83,7 +91,6 @@ def _preparar_icono() -> Optional[Path]:
         imgs_ico[0].save(str(dst), format="ICO", sizes=sizes,
                          append_images=imgs_ico[1:])
         _ICO_PATH = dst
-        _ICO_PATH = dst
     except Exception:
         pass
     return _ICO_PATH
@@ -114,12 +121,20 @@ def _habilitar_pantalla_completa(window, close_on_esc: bool = False):
     """Activa F11 para alternar ventana maximizada (manteniendo controles Windows)."""
     estado = {"max": False}
 
+    def _sync_estado():
+        try:
+            estado["max"] = window.state() == "zoomed"
+        except Exception:
+            estado["max"] = False
+
     def _toggle(_event=None):
+        _sync_estado()
         estado["max"] = not estado["max"]
         window.state("zoomed" if estado["max"] else "normal")
         return "break"
 
     def _on_esc(_event=None):
+        _sync_estado()
         if estado["max"]:
             estado["max"] = False
             window.state("normal")
@@ -131,6 +146,7 @@ def _habilitar_pantalla_completa(window, close_on_esc: bool = False):
 
     window.bind("<F11>", _toggle)
     window.bind("<Escape>", _on_esc)
+    window.bind("<Configure>", lambda _e: _sync_estado())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -147,7 +163,6 @@ def _abrir_zoom_pdf(parent, ruta_pdf: Path, num_pagina: int = 1):
     ventana = ctk.CTkToplevel(parent)
     ventana.title(f"Zoom — {ruta_pdf.name} (pág {num_pagina})")
     ventana.configure(fg_color="#2B2B2B")
-    ventana.transient(parent)
     ventana.grab_set()
     ventana.resizable(True, True)
     ventana.minsize(480, 500)
@@ -451,6 +466,12 @@ def _crear_badge_pagina(parent, titulo: str, numero: int, color: str):
 def _centrar_ventana(window, width: int, height: int, parent=None, _segunda_pasada: bool = True):
     """Centra una ventana de forma consistente en pantalla (sin desvío hacia abajo)."""
     _ = parent  # Reservado para uso futuro; centrado actual es por pantalla.
+    try:
+        if window.state() == "zoomed":
+            return
+    except Exception:
+        pass
+
     if _segunda_pasada:
         window.geometry(f"{width}x{height}")
     window.update_idletasks()
@@ -576,7 +597,6 @@ class VentanaConsultaSeparacion(ctk.CTkToplevel):
         _centrar_ventana(self, 1000, 750, parent)
         
         # Modal
-        self.transient(parent)
         self.grab_set()
         _set_app_icon(self, delay=150)
         _habilitar_pantalla_completa(self)
@@ -778,7 +798,6 @@ class VentanaVerificacion(ctk.CTkToplevel):
         _centrar_ventana(self, 1000, 750, parent)
         
         # Modal
-        self.transient(parent)
         self.grab_set()
         _set_app_icon(self, delay=150)
         _habilitar_pantalla_completa(self)
@@ -973,7 +992,6 @@ class VentanaNumDuplicado(ctk.CTkToplevel):
 
         _centrar_ventana(self, 1000, 700, parent)
 
-        self.transient(parent)
         self.grab_set()
         _set_app_icon(self, delay=150)
         _habilitar_pantalla_completa(self)
